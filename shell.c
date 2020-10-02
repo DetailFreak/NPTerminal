@@ -5,10 +5,13 @@
 #include<ctype.h>
 #include<sys/wait.h>
 
+#define DEBUG 3
+
 #define STDIN 0
 #define STDOUT 1
 
-#define DEBUG 3
+#define NULL_ENDS 1
+#define NO_NULL_ENDS 0
 
 char* get_input(){
     char *buf;
@@ -129,10 +132,13 @@ void pipe_safe(int *fd){
     }
 }
 
-int **init_pipes(int numPipes){
+int **init_pipes(int numPipes, int type){
     // printf("=====> Initializing %d pipe(s) for pid %d\n", numPipes, getpid());
-    int **pipes = malloc(numPipes*sizeof(int*));
-    for(int i = 0; i<numPipes; ++i){
+    numPipes = numPipes + 2*type;
+    int **pipes = malloc((numPipes) *sizeof(int*));
+    pipes[0] = NULL;
+    pipes[numPipes- 1] = NULL;
+    for(int i = type; i<numPipes-type; ++i){
         pipes[i] = malloc(2*sizeof(int));
         pipe_safe(pipes[i]);
     } 
@@ -177,7 +183,7 @@ int execute(char **args){
     #endif
     int status = execute_pipe(args, NULL, NULL); 
     #if DEBUG
-    printf("[Done]\n",args[0]);
+    printf("[Done]\n");
     #endif
     return status;
 }
@@ -212,32 +218,32 @@ int execute_multipipe(char **commands, int pipeCount){
         4. closes last pipe fds.
     */
     #if DEBUG
-    printf("[Executing multipipe, pipe(s):%d]\n", pipeCount);
+    printf("[Executing multipipe, #pipe(s) = %d]\n", pipeCount);
     #endif
-    int  ** pipes = init_pipes(pipeCount);
-    char ** args  = tokenize(remove_space(commands[0]));
-    int     pid   = execute_pipe(args, NULL, pipes[0]);
-    free(args);
-    for(int i = 1; i < pipeCount; ++i){
-        waitpid(pid, NULL, 0);
+
+    // Null ends option will create  extra dummy (null) start and end pipes.
+    char **args;
+    int pid;
+    int commandCount = pipeCount + 1;
+    int **pipes = init_pipes(pipeCount, NULL_ENDS);
+    
+    for(int i = 0; i < commandCount; ++i){
         args = tokenize(remove_space(commands[i]));
-        pid  = execute_pipe(args, pipes[i-1], pipes[i]);
-        close_safe(pipes[i-1][0]);
-        close_safe(pipes[i-1][1]);
-        // free(pipes[i-1]);
+        pid = execute_pipe(args, pipes[i], pipes[i + 1]);
+        if (pipes[i]) {
+            close_safe(pipes[i][0]);
+            close_safe(pipes[i][1]);
+            free(pipes[i]);
+        }
+        waitpid(pid, NULL, 0);
+        free(args);
     }
-    waitpid(pid, NULL,0);
-    args = tokenize(remove_space(commands[pipeCount]));
-    pid  = execute_pipe(args, pipes[pipeCount - 1], NULL);
-    close_safe(pipes[pipeCount - 1][0]);
-    close_safe(pipes[pipeCount - 1][1]);
-    //free(args);
-    // free(pipes[pipeCount-1]);
-    // free(pipes);
-    waitpid(pid, NULL, 0);
+    free(pipes);
+    
     #if DEBUG
     printf("[Done]\n");
     #endif
+
     return 1;
 }
 
