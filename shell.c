@@ -423,7 +423,9 @@ int execute_2Pipe(char **args){
     }else{
         //
     }
-
+    close(p2_fd[0]);
+    close(p2_fd[1]);
+    wait(NULL);
     return 1;
 }
 
@@ -629,7 +631,11 @@ int execute_3Pipe(char **args){
     default:
         break;
     }
-
+    close(p2_fd[0]);
+    close(p2_fd[1]);
+    wait(NULL);
+    wait(NULL);
+    wait(NULL);
     return 1;
 }
 
