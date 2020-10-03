@@ -1,16 +1,14 @@
-#include<stdio.h>
-#include<unistd.h>
-#include<stdlib.h>
-#include<string.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <errno.h>
-#include <fcntl.h> 
+#include <fcntl.h>
+#include <signal.h>
 #include <sys/stat.h> 
 #include <sys/types.h> 
 #include <ctype.h>
-#include <sys/wait.h>
-
-
 /*
     Set debug level:
     0 => no logs
@@ -25,6 +23,70 @@
 
 #define NULL_ENDS 1
 #define NO_NULL_ENDS 0
+
+#define HISTORY_LENGTH 10
+
+typedef struct CircularQueue {
+    char** buff;
+    int max_len;
+    int len;
+    int start;
+    int end;
+} Queue; 
+
+Queue *command_history;
+
+Queue* init_queue(int max_len) {
+    Queue* q = malloc(sizeof(Queue));
+    q->buff = malloc(max_len * sizeof(char*));
+    for(int i = 0; i<max_len; ++i) {
+        q->buff[i] = malloc(128*sizeof(char));
+    }
+    q->max_len = max_len;
+    q->len = 0;
+    q->start= -1;
+    q->end=0;
+    return q;
+}
+
+void insert_queue(Queue *q, const char * str){
+    strcpy(q->buff[q->end], str);
+
+    q->end = (q->end + 1) % q->max_len;
+    
+    if (q->len == q->max_len || q->len == 0) {
+        q->start = (q->start + 1) % q->max_len;
+        if (q->len == 0) q->len++;
+    } else {
+        q->len++;
+    }
+}
+
+void  pop_front(Queue *q) {
+    if (q->len == 0) 
+        printf("queue: underflow!");
+    else {
+        q->start = (q->start +1) % q->max_len;
+        q->len--;
+    }
+}
+
+char* get_idx(Queue *q, int i){
+    if (i < 0 || i >= q->len) return NULL;
+    else return q->buff[(q->start+i) % q->max_len];
+}
+
+void delete_queue(Queue *q) {
+    for(int i = 0; i<q->max_len; ++i)
+        free(q->buff[i]);
+    free(q);
+}
+
+void print_queue(Queue *q) {
+    for(int i = 0; i<q->len; ++i) {
+        printf("%s", get_idx(q, i));
+    }
+}
 
 char* get_input(){
     char *buf;
@@ -348,8 +410,6 @@ int execute_2Pipe(char **args){
         //parent
     }
 
-
-
     int p2_fd[2];
     if(pipe(p2_fd) == -1) {
         printf("error p2_fd \n");
@@ -639,7 +699,50 @@ int execute_3Pipe(char **args){
     return 1;
 }
 
+void sigint_handler(int x) {
+    if (command_history->len == 0) {
+        printf("\b\bSIGINT\n#####################\nNo command history.\n#####################\n");
+    } else {
+        printf("\b\bSIGINT\n#####################\nLast %d Commands:\n#####################\n", command_history->len);
+        print_queue(command_history);
+    }
+    printf("---------------------\n$ ");
+    fflush(stdout);
+}
 
+void sigquit_handler(int i) {
+    do{
+        printf("\b\bSIGQUIT\n=> Do you want to exit? (yes\\no) : ");
+        
+        char str[128];
+        scanf("%s",str);
+        int len = strlen(str);
+
+        for(int i = 0; i<len ; ++i)
+            str[i] = tolower(str[i]);
+
+        if (strcmp(str,"no") == 0) break;
+        if (strcmp(str, "yes") == 0) exit(EXIT_SUCCESS);
+        printf("\n");
+    
+    } while (1);
+    printf("\n$ ");
+    fflush(stdout);
+}
+
+void init_signal_handling() {
+    sigset_t set;
+	sigemptyset(&set);
+    
+    sigfillset(&set);
+    sigdelset(&set, SIGINT);
+    sigdelset(&set, SIGQUIT);
+	
+    sigprocmask(SIG_SETMASK, &set, NULL);
+
+    signal(SIGINT, sigint_handler);
+    signal(SIGQUIT, sigquit_handler);
+}
 
 void cmd_loop(){
     /*
@@ -648,6 +751,9 @@ void cmd_loop(){
     3.  check tokens 
     4.  execute
     */
+
+    command_history = init_queue(HISTORY_LENGTH);
+    
     char *input;
     char **args;
     char **commands;
@@ -655,6 +761,7 @@ void cmd_loop(){
 
     do{
         if(*(input = get_input()) == '\n') continue;
+        insert_queue(command_history, input);
         // check in the reverse order
         if(strstr(input, "|||") != NULL){
             //triple pipe
@@ -691,6 +798,7 @@ void cmd_loop(){
 }
 
 int main(int argc, char *argv[]){
+    init_signal_handling();
     cmd_loop();
     return 0;
 }
