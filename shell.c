@@ -5,6 +5,13 @@
 #include<ctype.h>
 #include<sys/wait.h>
 
+/*
+    Set debug level:
+    0 => no logs
+    1 => show pid and status
+    2 => show pids, status and forks
+    3 => show pids, status, forks and fd related calls
+*/
 #define DEBUG 3
 
 #define STDIN 0
@@ -76,11 +83,7 @@ char **parse_input(char *input){
         char *newline = strchr(tok, '\n');
         if(newline)
             *newline=0;
-        // command[i] = malloc(strlen(tok) + 2);
         command[i] = tok;
-        // strcpy(command[i], tok);
-        // strcat(command[i], "\n");
-        // printf("%s\t",  command[i]);
         i++;
         tok = strtok(NULL, sep);
     }
@@ -151,7 +154,7 @@ int execute_pipe(char **args, int *inputPipe, int *outputPipe){
         Generic execution command with/without pipes
         in case pipes are used:
             0. Closes unneeded pipe ends.
-            1. it duplicates the pipefd to STDIN/OUT
+            1. Duplicates the pipefd to STDIN/OUT
 
     */    
     int childPid = fork();
@@ -177,11 +180,24 @@ int execute_pipe(char **args, int *inputPipe, int *outputPipe){
     return childPid;
 }
 
+void print_status(int pid, int status, const char* command){
+    if(WIFEXITED(status))
+        printf("<SUCCESS> %d \"%s\" returned normally\n", pid, command);
+    if(WIFSIGNALED(status))
+        printf("<SIGNALLED> %d \"%s\" terminated by signal\n", pid, command);
+}
+
 int execute(char **args){
     #if DEBUG
     printf("[Executing \"%s\"]\n",args[0]);
     #endif
-    int status = execute_pipe(args, NULL, NULL); 
+
+    int pid, status;
+    
+    pid = execute_pipe(args, NULL, NULL); 
+    waitpid(pid, &status, 0);
+    print_status(pid, status, args[0]);
+
     #if DEBUG
     printf("[Done]\n");
     #endif
@@ -211,7 +227,7 @@ char *remove_space(char *str){
 int execute_multipipe(char **commands, int pipeCount){
     /*
         Executes each command using pipes as follows:
-        0. Initializes all pipes.
+        0. Initializes all pipes. Two NULL pipes at the ends for cleaner code.
         1. Waits for previous process (if any) to complete.
         2. Strips whitespace and tokenizes command to be executed.
         3. Executes the command by passing either a pipe or NULL to execute_pipe.
@@ -221,11 +237,10 @@ int execute_multipipe(char **commands, int pipeCount){
     printf("[Executing multipipe, #pipe(s) = %d]\n", pipeCount);
     #endif
 
+    char ** args;
+    int     pid, status, commandCount = pipeCount + 1;
     // Null ends option will create  extra dummy (null) start and end pipes.
-    char **args;
-    int pid;
-    int commandCount = pipeCount + 1;
-    int **pipes = init_pipes(pipeCount, NULL_ENDS);
+    int  ** pipes = init_pipes(pipeCount, NULL_ENDS);
     
     for(int i = 0; i < commandCount; ++i){
         args = tokenize(remove_space(commands[i]));
@@ -235,7 +250,9 @@ int execute_multipipe(char **commands, int pipeCount){
             close_safe(pipes[i][1]);
             free(pipes[i]);
         }
-        waitpid(pid, NULL, 0);
+        waitpid(pid, &status, 0);
+        print_status(pid, status, args[0]);
+
         free(args);
     }
     free(pipes);
@@ -261,7 +278,9 @@ void cmd_loop(){
     int status, pipeCount;
 
     do{
-        input = get_input();
+        if (*(input = get_input()) == '\n')
+            continue;
+        
         pipeCount = count_pipe(input);
 
         if(pipeCount == 0){
@@ -276,8 +295,6 @@ void cmd_loop(){
         free(input);
     }while(1);
 }
-
-
 
 int main(int argc, char *argv[]){
     cmd_loop();
